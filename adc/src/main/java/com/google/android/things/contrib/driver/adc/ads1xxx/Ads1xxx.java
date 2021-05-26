@@ -153,7 +153,7 @@ public class Ads1xxx implements AutoCloseable {
 
 
     /**
-     * Default I2C slave address
+     * Default I2C peripheral address
      */
     public static final int DEFAULT_ADDRESS = 0x48;
 
@@ -172,12 +172,15 @@ public class Ads1xxx implements AutoCloseable {
     private static final int RATE_MASK = 0x7000;
     private static final int COMPARATOR_MASK = 0x3;
 
+    // ADS1xxx chips convert ADC samples in a single cycle
+    // This timeout represents two cycles at the slowest sample rate (8 SPS)
+    private static final int CONVERSION_TIMEOUT_MILLIS = 250;
 
     private final Configuration mChipConfiguration;
     private I2cDevice mDevice;
 
     /**
-     * Create a new Ads1xxx interface, with a slave address of {@link #DEFAULT_ADDRESS}.
+     * Create a new Ads1xxx interface, with a peripheral address of {@link #DEFAULT_ADDRESS}.
      *
      * @param i2cName I2C port name where the device is attached. Cannot be null.
      * @param chip identifier for the connected device chip.
@@ -191,7 +194,7 @@ public class Ads1xxx implements AutoCloseable {
      * Create a new Ads1xxx interface.
      *
      * @param i2cName I2C port name where the device is attached. Cannot be null.
-     * @param i2cAddress I2C slave address for the connected device.
+     * @param i2cAddress I2C peripheral address for the connected device.
      * @param chip identifier for the connected device.
      * @throws IOException If the I2cDevice fails to open.
      */
@@ -340,7 +343,7 @@ public class Ads1xxx implements AutoCloseable {
         config |= FLAG_START_READ; // set the start read bit
         setConfigRegister(config);
 
-        return readRawValue();
+        return readRawValue(CONVERSION_TIMEOUT_MILLIS);
     }
 
     /**
@@ -385,7 +388,7 @@ public class Ads1xxx implements AutoCloseable {
         config |= FLAG_START_READ; // set the start read bit
         setConfigRegister(config);
 
-        return readRawValue();
+        return readRawValue(CONVERSION_TIMEOUT_MILLIS);
     }
 
     /**
@@ -409,7 +412,19 @@ public class Ads1xxx implements AutoCloseable {
     /**
      * Return the raw A/D conversion value
      */
-    private int readRawValue() throws IOException {
+    private int readRawValue(int timeout) throws IOException {
+        long deadline = System.nanoTime() + (timeout * 1000);
+
+        // Verify conversion is complete
+        boolean ready;
+        do {
+            if (System.nanoTime() > deadline) {
+                throw new IOException("ADS1xxx timed out on sample conversion");
+            }
+            short config = getConfigRegister();
+            ready = (config & FLAG_START_READ) == FLAG_START_READ;
+        } while (!ready);
+
         byte[] result = new byte[2];
         mDevice.readRegBuffer(REG_CONVERSION, result, 2);
 
